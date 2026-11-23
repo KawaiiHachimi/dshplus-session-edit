@@ -387,7 +387,7 @@ test('repeated edits keep one identity and release the old lifecycle effects', o
   const current = f.ctx.agents.get(source.agent.id);
   await f.host.flush(current);
   assert.deepEqual(userEvents(await f.readStored(source.agent.id)).map(e => text(e.data)), ['Version 3']);
-  assert.equal(f.ctx.root.fiber.getEffects().filter(effect => effect.label === 'agentLoop.lifecycle(' + source.agent.id + ')').length, 1);
+  assert.equal(f.ctx.fiber.getEffects().filter(effect => effect.label === 'agentLoop.lifecycle(' + source.agent.id + ')').length, 1);
   assert.equal(current.loopCtx.fiber.getEffects().filter(effect => effect.label === 'agentLoop.scope(' + source.agent.id + ')').length, 1);
   assert.equal(f.requests.length, 4);
 });
@@ -485,7 +485,7 @@ test('an unknown agent teardown blocks rewriting before retirement but allows co
   const f = await createRuntime(t);
   const source = await f.createSource();
   const events = await f.stop(source.agent);
-  const lifecycle = f.ctx.root.fiber.getEffects().find(effect => effect.label === 'agentLoop.lifecycle(' + source.agent.id + ')');
+  const lifecycle = f.ctx.fiber.getEffects().find(effect => effect.label === 'agentLoop.lifecycle(' + source.agent.id + ')');
   assert.ok(lifecycle);
   const label = lifecycle.label;
   lifecycle.label = 'unknown-agent-lifecycle';

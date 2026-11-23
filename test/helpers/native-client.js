@@ -17,11 +17,34 @@ const browserReact = {
   },
 };
 
-function region(source, name) {
-  const marker = '//#region lib/types/' + name + '.js';
-  const start = source.indexOf(marker);
-  assert.notEqual(start, -1, 'Native DSH region missing: ' + name);
-  return source.slice(start + marker.length, source.indexOf('//#endregion', start));
+// DSH 0.2.3 inlines each CSS module's class map as its own build region just
+// before the component that reads it, so extraction follows those references
+// instead of the removed `import css from './X.module.css'` lines.
+const CSS_REGION = '\\0dsh-css:';
+
+function regions(source) {
+  const table = new Map();
+  const pattern = /\/\/#region ([^\n]+)\n([\s\S]*?)\n\/\/#endregion/g;
+  for (const match of source.matchAll(pattern)) table.set(match[1], { body: match[2], index: match.index });
+  return table;
+}
+
+function extract(source, names) {
+  const table = regions(source);
+  const picked = new Map();
+  const take = key => {
+    const entry = table.get(key);
+    assert.ok(entry, 'Native DSH region missing: ' + key);
+    if (picked.has(key)) return;
+    picked.set(key, entry);
+    for (const [candidate, region] of table) {
+      if (!candidate.startsWith(CSS_REGION)) continue;
+      const binding = /var (\w+) = \{/.exec(region.body)?.[1];
+      if (binding && new RegExp('\\b' + binding + '\\b').test(entry.body)) take(candidate);
+    }
+  };
+  for (const name of names) take('lib/types/' + name + '.js');
+  return [...picked.values()].sort((a, b) => a.index - b.index).map(entry => entry.body).join('\n');
 }
 
 async function bundle(contents, resolveDir, plugins = []) {
@@ -43,26 +66,17 @@ export async function nativeClientFixture() {
   const source = await readFile(primitivesPath, 'utf8');
   const names = [
     'icons/artwork', 'icons/index', 'Button', 'InlineEditor',
-    'overlay-top-margin', 'keyboard-composition', 'focus', 'useModalLayer',
+    'overlay-top-margin', 'keyboard-composition', 'focus',
     'ShortcutKeys', 'MenuSurface', 'Menu', 'MenuGroup', 'useAnchoredMaxHeight',
     'useDismissOnOutsidePointer', 'clipboard',
     'Modal', 'input-modality', 'Tooltip', 'Toast',
   ];
-  const body = names.map(name => region(source, name)).join('\n');
-  // Keep the React/utility imports the extracted regions resolve through, plus
-  // the CSS modules whose bindings they actually reference.
-  const imports = source.split('\n').flatMap(line => {
-    if (!/^import /.test(line)) return [];
-    const match = line.match(/^import\s+(.*?)\s*from\s*"([^"]+)";?$/);
-    if (!match) return [];
-    const [, clause, specifier] = match;
-    if (/^(?:react|react-dom|react\/jsx-runtime|clsx)$/.test(specifier)) return [line];
-    if (!specifier.endsWith('.css')) return [];
-    const bindings = clause.replace(/[{}]/g, ' ').split(',')
-      .map(part => part.trim().replace(/^\*\s+as\s+/, '').split(/\s+as\s+/)[0].trim())
-      .filter(name => /^[A-Za-z_$][\w$]*$/.test(name));
-    return bindings.some(name => new RegExp('\\b' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(body)) ? [line] : [];
-  }).join('\n');
+  const body = extract(source, names);
+  // Only React and clsx are hoisted to the page; every other module the
+  // extracted regions mention is inlined by the build itself.
+  const imports = source.split('\n')
+    .filter(line => /^import /.test(line) && /from "(?:react|react-dom|react\/jsx-runtime|clsx)";/.test(line))
+    .join('\n');
   const primitives = await bundle(imports + '\n' + body + `
     window.NativeUI = { Button, InlineEditor, Menu, MenuItemButton, Modal, Toast, Tooltip, writeClipboard,
       focusWithoutRing, isMobileDevice,
